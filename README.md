@@ -156,25 +156,50 @@ image-prompt-extension/
 └─ README.md
 ```
 
-## 当前状态
+## 更新日志
 
-项目处于 MVP 开发阶段，核心流程已经跑通：
+### v0.2.0 — 双通道生图 & 模型能力系统 (2026-05)
 
-- 图片右键进入插件
-- Prompt 反推
-- 自定义补充提示词
-- 图片生成闭环
-- 下载
-- 历史记录和草稿恢复
-- API 状态器
-- 调试日志
+**新增双通道图像生成架构：**
 
-后续可以继续完善：
+- **Image 通道**（gpt-image-2 / gpt-image-2-vip）：`POST /v1/draw/completions`，使用 `aspectRatio` + `quality`
+- **Nano Banana 通道**（nano-banana-pro / nano-banana-2 / nano-banana-fast）：`POST /v1/draw/nano-banana`，使用 `aspectRatio` + `imageSize`
+- 两个通道统一通过 `POST /v1/draw/result` 异步轮询获取结果
 
-- 更多真实 Provider 适配
-- 更完整的 Options 表单校验
-- Chrome Web Store 发布准备
-- UI 细节和响应式优化
+**模型能力系统：**
+- 设置页新增模型能力卡片：展示接口组、积分消耗、提交/结果接口、支持尺寸、能力标签
+- 清晰度下拉根据所选模型自动过滤（nano-banana-fast / gpt-image-2 仅支持 1K）
+- Endpoint 根据模型自动切换，默认只读，可手动覆盖
+
+**内容审核处理：**
+- `output_moderation` → `IMAGE_MODERATION_FAILED`（图片生成被安全审核拦截）
+- `input_moderation` → `IMAGE_INPUT_MODERATION_FAILED`（提示词触发输入审核）
+- 新增安全净化提示词功能
+
+**Bug 修复：**
+- 修复 AbortError 被误判为 `code: 20` 的问题
+- 修复 JSON 响应被误当成 SSE 流解析
+- 修复 Nano Banana `aspectRatio` / `imageSize` 为空的问题
+- 修复"跟随参考图"模式对竖图的检测（9:16 不再被映射为 1:1 或 1:2）
+- 修复 `webhook` 字段名大小写错误 → 统一为 `webHook: "-1"`
+- 新增重复点击保护锁，防止一次点击触发多次生成
+
+### v0.1.1 — 尺寸系统升级 (2026-04)
+
+- 清晰度从 720p / 1080p 升级为 **1K / 2K / 4K**，覆盖 5 种比例共 15 个尺寸组合
+- 新增 `detectStandardRatio`：跟随参考图模式映射到 5 个标准比例（1:1 / 16:9 / 9:16 / 4:3 / 3:4）
+- Options 与 Side Panel 共享 `currentImageMeta`，统一尺寸计算
+- 多角度生成使用统一 `getOutputSize()`
+- 旧字段 `p720` / `p1080` / `quality` / `selectedRatio` 自动迁移
+
+### v0.1.0 — MVP 首发 (2026-04)
+
+- 右键图片 → Side Panel → Prompt 反推 → 生成图片闭环
+- 支持上传、粘贴、拖拽图片，blob/防盗链自动转 dataURL
+- Image API 生成：单图 + 多角度（参考/侧面/背面/顶面）
+- 调试日志：API 请求/响应脱敏记录，尺寸映射日志
+- 历史记录、草稿恢复、JSON 导出/导入
+- 深色科技风 UI，青绿色主色调
 
 ## 隐私说明
 
