@@ -6,7 +6,7 @@ import { mockImages } from '../utils/mockImages.js';
 import { getOutputSize, mapSizeForOpenAIImages, getProviderSize } from '../utils/size.js';
 import { createMultiAnglePrompts } from './anglePromptService.js';
 import { appendLog } from './logService.js';
-import { getImageModelConfig, toApiImageSize, detectAspectRatioFromImage, resolveAspectRatioForNano, validateNanoBananaPayload } from '../data/imageModels.js';
+import { getImageModelConfig, toApiImageSize, detectAspectRatioFromImage, resolveAspectRatioForNano, validateNanoBananaPayload, getSafeResolutionForModel, modelSupportsResolution } from '../data/imageModels.js';
 import { extractTaskId, pollImageResult, normalizeImageTaskFailure } from './imageTaskService.js';
 
 export async function generateImages({
@@ -379,8 +379,12 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
     const resolvedAspectRatio = resolveAspectRatioForNano({ settings: settings || {}, currentImage: referenceImage, outputSize });
     const finalAspectRatio = resolvedAspectRatio || outputSize?.aspectRatio || api.aspectRatio || 'auto';
 
-    // Nano-banana-fast only supports 1K
-    const finalImageSize = api.model === 'nano-banana-fast' ? '1K' : imageSize;
+    // Capability check: ensure resolution is within model's supported range
+    const safeRes = getSafeResolutionForModel(api.model, resolutionPreset);
+    if (safeRes !== resolutionPreset) {
+      appendLog({ level: 'warn', apiType: 'image', event: 'IMAGE_MODEL_CAPABILITY_ADJUSTED', provider: 'draw-api', message: `Resolution adjusted for ${api.model}`, data: { model: api.model, fromResolution: resolutionPreset, toResolution: safeRes, reason: `model only supports: ${(getImageModelConfig(api.model)?.supportsResolutions || []).join(', ')}` } });
+    }
+    const finalImageSize = toApiImageSize(safeRes);
 
     payload = {
       model: api.model, prompt,

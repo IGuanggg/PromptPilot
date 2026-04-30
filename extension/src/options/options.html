@@ -101,13 +101,14 @@
               </label>
               <label>API Key<input name="imageApi.apiKey" type="password" /></label>
               <label>Model
-                <select name="imageApi.model">
-                  <option value="gpt-image-2-vip">gpt-image-2-vip</option>
-                  <option value="gpt-image-2">gpt-image-2</option>
-                  <option value="nano-banana-pro">nano-banana-pro</option>
-                  <option value="nano-banana-2">nano-banana-2</option>
-                  <option value="nano-banana-fast">nano-banana-fast</option>
+                <select name="imageApi.model" id="imageModelSelect">
+                  <option value="gpt-image-2-vip">gpt-image-2-vip · GPT Image · 最高 4K</option>
+                  <option value="gpt-image-2">gpt-image-2 · GPT Image · 最高 1K</option>
+                  <option value="nano-banana-pro">nano-banana-pro · Nano Banana · 最高 4K</option>
+                  <option value="nano-banana-2">nano-banana-2 · Nano Banana · 最高 4K</option>
+                  <option value="nano-banana-fast">nano-banana-fast · Nano Banana · 最高 1K</option>
                 </select>
+                <div id="imageModelCapability" class="model-capability-card"></div>
               </label>
             </div>
 

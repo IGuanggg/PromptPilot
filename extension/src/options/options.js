@@ -5,7 +5,7 @@ import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLog
 import { appendLog, updateLastCall } from '../services/logService.js';
 import { testPromptTextApi, testPromptVisionApi } from '../services/promptService.js';
 import { RATIO_OPTIONS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
-import { getSubmitEndpointForModel, getResultEndpointForModel } from '../data/imageModels.js';
+import { getSubmitEndpointForModel, getResultEndpointForModel, getImageModelConfig } from '../data/imageModels.js';
 
 const form = document.getElementById('settingsForm');
 const saveStatus = document.getElementById('saveStatus');
@@ -54,6 +54,9 @@ async function init() {
   loadSizeState(settings);
   fillForm(settings);
   updateEndpointFromModel();
+  const initModel = settings?.imageApi?.model || 'gpt-image-2';
+  renderImageModelCapability(initModel);
+  updateResolutionOptionsByModel(initModel);
   renderLastCall();
   form.addEventListener('submit', (event) => event.preventDefault());
 }
@@ -153,8 +156,16 @@ function bindEndpointSync() {
   const overrideCb = document.getElementById('customEndpointOverrideCb');
   if (!modelSelect) return;
 
-  modelSelect.addEventListener('change', updateEndpointFromModel);
+  modelSelect.addEventListener('change', onModelChange);
   if (overrideCb) overrideCb.addEventListener('change', updateEndpointFromModel);
+}
+
+function onModelChange() {
+  const modelSelect = document.querySelector('[name="imageApi.model"]');
+  const modelName = modelSelect?.value || 'gpt-image-2';
+  updateEndpointFromModel();
+  renderImageModelCapability(modelName);
+  updateResolutionOptionsByModel(modelName);
 }
 
 function updateEndpointFromModel() {
@@ -174,6 +185,58 @@ function updateEndpointFromModel() {
   if (preview) {
     preview.textContent = `提交：${submitEp} | 结果：${resultEp}`;
   }
+}
+
+function renderImageModelCapability(modelName) {
+  const el = document.getElementById('imageModelCapability');
+  if (!el) return;
+  const model = getImageModelConfig(modelName);
+  if (!model) { el.innerHTML = ''; return; }
+
+  const badges = (model.badges || []).map(b => {
+    const warn = b === '快速' || (b === '1K' && model.maxResolution === '1K');
+    return `<span class="model-cap-badge${warn ? ' warn' : ''}">${b}</span>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="cap-title">${model.displayName || model.name}</div>
+    <div class="cap-meta">
+      <div>接口组：${model.channelLabel}</div>
+      <div>积分消耗：${model.creditCost || '-'} / 次</div>
+      <div>提交接口：${model.submitEndpoint}</div>
+      <div>结果接口：${model.resultEndpoint}</div>
+      <div>最大尺寸：${model.maxSizeLabel}</div>
+      <div>多角度：${model.supportsMultiAngle ? '支持' : '不建议'}</div>
+    </div>
+    <div class="cap-badges">${badges}</div>
+    <div class="cap-desc">${model.description || ''}</div>`;
+}
+
+function updateResolutionOptionsByModel(modelName) {
+  const select = document.getElementById('resolutionPreset');
+  if (!select) return;
+  const model = getImageModelConfig(modelName);
+  const supported = model?.supportsResolutions || ['1k'];
+  const current = resolutionPreset;
+
+  const allOptions = [
+    { value: '1k', label: '1K / 标准' },
+    { value: '2k', label: '2K / 高清' },
+    { value: '4k', label: '4K / 超清' }
+  ];
+
+  const filtered = allOptions.filter(o => supported.includes(o.value));
+  select.innerHTML = filtered.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+
+  // Restore current value if still supported
+  if (supported.includes(current)) {
+    select.value = current;
+  } else {
+    resolutionPreset = supported[0] || '1k';
+    select.value = resolutionPreset;
+  }
+  updateFinalSize();
+  updateResolutionDescription?.();
 }
 
 function updateSizePanelVisibility() {

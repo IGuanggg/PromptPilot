@@ -79,3 +79,48 @@ textarea { min-height: 90px; resize: vertical; }
   line-height: 1.5;
   text-align: center;
 }
+
+/* ── Model capability card ── */
+.model-capability-card {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(64, 255, 210, 0.18);
+  border-radius: 14px;
+  background: rgba(18, 32, 42, 0.72);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.model-capability-card .cap-title {
+  font-weight: 800;
+  color: #ffffff;
+  margin-bottom: 6px;
+}
+.model-capability-card .cap-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+}
+.model-capability-card .cap-desc {
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 12px;
+  margin-top: 8px;
+}
+.model-capability-card .cap-badges {
+  display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px;
+}
+.model-cap-badge {
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(48, 240, 203, 0.3);
+  background: rgba(48, 240, 203, 0.12);
+  color: #30f0cb;
+  font-size: 11px;
+  font-weight: 700;
+}
+.model-cap-badge.warn {
+  border-color: rgba(255, 196, 77, 0.35);
+  background: rgba(255, 196, 77, 0.12);
+  color: #ffc44d;
+}
