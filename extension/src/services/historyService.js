@@ -2,6 +2,7 @@ import { createId } from '../utils/id.js';
 import { formatCompactDateTime } from '../utils/date.js';
 import { isQuotaExceededError, sanitizeHistoryItem } from '../utils/sanitize.js';
 import { loadSettings } from './storageService.js';
+import { createObjectUrlFromBlobId } from '../storage/imageBlobStore.js';
 
 export const HISTORY_KEY = 'promptpilotHistory';
 const DEFAULT_HISTORY_LIMIT = 30;
@@ -115,11 +116,15 @@ export function createHistoryItemFromState(state) {
     source: currentImage.source || 'context-menu',
     createdAt: now,
     updatedAt: now,
+    thumbnailBlobId: currentImage.thumbnailBlobId || '',
+    sourceImageBlobId: currentImage.blobId || '',
+    resultBlobIds: (state.results || []).map(r => r.blobId).filter(Boolean),
     image: {
       id: currentImage.id || createId('img'),
       url: currentImage.url || currentImage.srcUrl || '',
-      dataUrl: currentImage.dataUrl || '',
-      displayUrl: currentImage.displayUrl || currentImage.dataUrl || currentImage.url || '',
+      dataUrl: '', // deprecated: stored in IndexedDB via blobId
+      displayUrl: currentImage.displayUrl || currentImage.url || '',
+      blobId: currentImage.blobId || '',
       pageUrl: currentImage.pageUrl || '',
       pageTitle: currentImage.pageTitle || '',
       fileName: currentImage.fileName || '',
@@ -162,6 +167,7 @@ export function createHistoryItemFromState(state) {
       id: result.id || createId('img'),
       url: result.url || '',
       thumbUrl: result.thumbUrl || result.url || '',
+      blobId: result.blobId || '',
       label: result.label || '',
       angleKey: result.angleKey || '',
       provider: result.provider || imageApi.type || '',
@@ -185,6 +191,35 @@ export function createHistoryItemFromState(state) {
 
 export function createHistoryExportFilename() {
   return `promptlens_history_${formatCompactDateTime()}.json`;
+}
+
+/**
+ * Get the best available image URL for a history item (thumbnail > source blob > result blob > remote URL).
+ */
+export async function getHistoryImageUrl(item) {
+  if (!item) return null;
+
+  // Thumbnail blob
+  if (item.thumbnailBlobId) {
+    const url = await createObjectUrlFromBlobId(item.thumbnailBlobId);
+    if (url) return url;
+  }
+
+  // Source image blob
+  if (item.image?.blobId) {
+    const url = await createObjectUrlFromBlobId(item.image.blobId);
+    if (url) return url;
+  }
+
+  // First result blob
+  const resultBlobId = item.results?.[0]?.blobId;
+  if (resultBlobId) {
+    const url = await createObjectUrlFromBlobId(resultBlobId);
+    if (url) return url;
+  }
+
+  // Fallback: remote URL or display URL
+  return item.image?.displayUrl || item.image?.url || item.results?.[0]?.url || null;
 }
 
 function getHistoryLimit(settings) {
