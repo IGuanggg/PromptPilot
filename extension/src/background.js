@@ -1,6 +1,7 @@
 import { appendLog, initLogService, setLogSettings } from './services/logService.js';
 import { loadSettings } from './services/storageService.js';
 import { isQuotaExceededError, sanitizePendingImage } from './utils/sanitize.js';
+import { notifyImageSentSuccess, notifyImageSentFailed } from './utils/notify.js';
 
 const MENU_ID = 'image-to-prompt';
 const PANEL_URL = 'src/sidepanel/sidepanel.html';
@@ -83,7 +84,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         });
 
         await savePendingImage(payload);
+        // Try to notify open Side Panel immediately
+        chrome.runtime.sendMessage({ type: 'PROMPTLENS_CONTEXT_IMAGE_RECEIVED', image: payload }).catch(() => {});
         await openPanel(tab, payload);
+        notifyImageSentSuccess();
         return;
       }
     } catch (error) {
@@ -93,6 +97,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         event: 'BLOB_FETCH_FAILED',
         message: `Blob URL 获取失败: ${error?.message || ''}`
       });
+      notifyImageSentFailed('未能读取该图片数据');
     }
   }
 
@@ -101,16 +106,29 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     ? { ...basePayload, dataUrl: '', displayUrl: '', recoverable: false, warning: '当前 blob 图片无法直接恢复，请尝试截图粘贴或本地上传' }
     : basePayload;
 
-  await savePendingImage(payload);
+  try {
+    await savePendingImage(payload);
 
-  appendLog({
-    level: 'info',
-    apiType: 'system',
-    event: 'PENDING_IMAGE_SAVED',
-    message: '图片已写入 pendingImage'
-  });
+    appendLog({
+      level: 'info',
+      apiType: 'system',
+      event: 'PENDING_IMAGE_SAVED',
+      message: '图片已写入 pendingImage'
+    });
 
-  await openPanel(tab, payload);
+    // Try to notify open Side Panel immediately
+    chrome.runtime.sendMessage({ type: 'PROMPTLENS_CONTEXT_IMAGE_RECEIVED', image: payload }).catch(() => {});
+    await openPanel(tab, payload);
+    notifyImageSentSuccess();
+  } catch (error) {
+    appendLog({
+      level: 'error',
+      apiType: 'system',
+      event: 'CONTEXT_MENU_SEND_FAILED',
+      message: `右键发送失败: ${error?.message || ''}`
+    });
+    notifyImageSentFailed(error?.message || '存储写入失败');
+  }
 });
 
 // ── Message listeners ──

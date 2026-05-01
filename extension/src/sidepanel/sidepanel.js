@@ -12,6 +12,8 @@ import { ERROR_CODES, getErrorMessage, normalizeError, sanitizeErrorLog } from '
 import { formatDateTime } from '../utils/date.js';
 import { ALLOWED_IMAGE_TYPES } from '../utils/fileSize.js';
 import { normalizeImageInput, handleLocalFile, handleDropFile, handlePasteEvent } from '../services/imageInputService.js';
+import { saveImageBlob, getImageBlob, createObjectUrlFromBlobId } from '../storage/imageBlobStore.js';
+import { createThumbnailBlob } from '../utils/imageThumbnail.js';
 
 const state = {
   currentImage: null,
@@ -136,8 +138,19 @@ function bindEvents() {
     }
   });
 
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'IMAGE_SELECTED') importImagePayload(message.payload);
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'IMAGE_SELECTED') {
+      console.log('[PromptLens] IMAGE_SELECTED received via runtime message');
+      importImagePayload(message.payload);
+      toast('图片已从右键菜单接收');
+    }
+    if (message.type === 'PROMPTLENS_CONTEXT_IMAGE_RECEIVED' && message.image) {
+      console.log('[PromptLens] received context image via runtime message');
+      importImagePayload(message.image);
+      toast('图片已从右键菜单接收');
+      sendResponse?.({ ok: true });
+      return true;
+    }
   });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -164,10 +177,13 @@ function bindImageInputEvents() {
   });
 
   $('pasteBtn').addEventListener('click', async () => {
+    console.log('[PromptPilot][CLICK] pasteBtn');
     try {
       const items = await navigator.clipboard.read();
+      console.log('[PromptPilot] async clipboard read OK, items:', items.length);
       for (const item of items) {
         for (const type of item.types) {
+          console.log('[PromptPilot] clipboard item type:', type);
           if (ALLOWED_IMAGE_TYPES.has(type)) {
             const blob = await item.getType(type);
             const file = new File([blob], 'clipboard.png', { type });
@@ -175,24 +191,31 @@ function bindImageInputEvents() {
             setCurrentImage(image);
             setTaskStatus('idle', '图片已从剪贴板导入，请点击反推');
             renderTaskStatus();
+            console.log('[PromptPilot] paste via async clipboard OK');
             return;
           }
         }
       }
       toast('剪贴板中没有图片');
-    } catch (error) { toast('请使用 Ctrl+V 粘贴图片，或授予剪贴板读取权限'); }
+    } catch (error) {
+      console.warn('[PromptPilot] async clipboard.read failed:', error?.name, error?.message);
+      toast('请点击插件面板后按 Ctrl+V 粘贴图片');
+    }
   });
 
   document.addEventListener('paste', async (event) => {
+    console.log('[PromptPilot][PASTE_EVENT]', { hasClip: !!event.clipboardData, files: event.clipboardData?.files?.length || 0, items: event.clipboardData?.items?.length || 0 });
     const target = event.target;
-    if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') return;
+    if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') { console.log('[PromptPilot] paste ignored — target is input/textarea'); return; }
     try {
       const image = await handlePasteEvent(event);
+      console.log('[PromptPilot] paste event image found, setting currentImage');
       setCurrentImage(image);
       setTaskStatus('idle', '图片已从粘贴导入，请点击反推');
       renderTaskStatus();
     } catch (error) {
-      if (error.message?.includes('剪贴板中没有图片')) return;
+      if (error.message?.includes('剪贴板中没有图片')) { console.log('[PromptPilot] paste event — no image in clipboard'); return; }
+      console.error('[PromptPilot] paste event error:', error);
       toast(error.message || '粘贴图片失败');
     }
   });
@@ -235,8 +258,17 @@ function bindImageInputEvents() {
 // ════════════════════════════════════════════════════════════════
 
 async function loadPendingImage() {
-  const data = await chrome.storage.local.get('pendingImage');
-  if (data.pendingImage) importImagePayload(data.pendingImage);
+  try {
+    const data = await chrome.storage.local.get(['pendingImage', 'promptLensPendingImage', 'promptPilotPendingImage']);
+    const pending = data.promptLensPendingImage || data.promptPilotPendingImage || data.pendingImage;
+    if (pending) {
+      importImagePayload(pending);
+      toast('图片已从右键菜单接收');
+      console.log('[PromptLens] pendingImage loaded from storage');
+      // Clean up all variants
+      await chrome.storage.local.remove(['pendingImage', 'promptLensPendingImage', 'promptPilotPendingImage']);
+    }
+  } catch (e) { console.warn('[PromptLens] loadPendingImage failed', e?.message); }
 }
 
 async function loadDraft() {
@@ -273,8 +305,47 @@ function setCurrentImage(image) {
   setTaskStatus('idle', '图片已接收，请点击反推');
   renderAll();
   queueSaveDraft();
-  // Save image dimensions as soon as available (may be immediate or after preview loads)
   scheduleSaveCurrentImageMeta(image);
+  // Persist source blob to IndexedDB for history durability
+  persistSourceBlob(image);
+}
+
+async function persistSourceBlob(image) {
+  if (!image || image._blobPersisted) return;
+  image._blobPersisted = true; // mark early to prevent retries
+  // Fire-and-forget: never block the paste/upload flow
+  setTimeout(async () => {
+    try {
+      let blob = null;
+      if (image.dataUrl && String(image.dataUrl).startsWith('data:')) {
+        const res = await fetch(image.dataUrl);
+        blob = await res.blob();
+      } else if (image.file) {
+        blob = image.file;
+      } else if (image.displayUrl && !String(image.displayUrl).startsWith('blob:')) {
+        try { const res = await fetch(image.displayUrl); blob = await res.blob(); } catch { /* remote may fail */ }
+      }
+      if (blob && blob.size > 0) {
+        const saved = await saveImageBlob({ blob, mimeType: blob.type || 'image/png', kind: 'source', sourceUrl: image.url || '', width: image.width || 0, height: image.height || 0 });
+        if (saved) { image.blobId = saved.id; }
+      }
+    } catch (e) { console.warn('[PromptLens] blob persist failed (non-blocking)', e?.message); }
+  }, 0);
+}
+
+async function persistResultBlobs(results) {
+  if (!results || results.length === 0) return;
+  for (const r of results) {
+    if (r.failed || !r.url || r._blobPersisted) continue;
+    try {
+      const res = await fetch(r.url);
+      const blob = await res.blob();
+      if (blob && blob.size > 0) {
+        const saved = await saveImageBlob({ blob, mimeType: blob.type || 'image/png', kind: 'result', sourceUrl: r.url, width: r.width || 0, height: r.height || 0, expiresAt: Date.now() + 2 * 3600 * 1000 });
+        if (saved) { r.blobId = saved.id; r._blobPersisted = true; }
+      }
+    } catch { /* remote URL may fail */ }
+  }
 }
 
 function scheduleSaveCurrentImageMeta(image) {
@@ -534,6 +605,7 @@ async function handleGenerate() {
       referenceImage, settings: state.settings, mode, count, width, height, size, dashscopeSize, outputSize
     });
     state.results = result.images || [];
+    persistResultBlobs(state.results);
     state.lastGenerateMode = mode;
     state.lastError = null;
     setTaskStatus('success', '生成完成');
@@ -639,6 +711,7 @@ async function handleGenerateMultiAngleImages() {
       outputSize
     });
     state.results = result.images || [];
+    persistResultBlobs(state.results);
     state.lastGenerateMode = 'multi-angle';
     state.lastError = null;
     const failedCount = state.results.filter((image) => image.failed).length;
@@ -838,7 +911,7 @@ function renderHistoryList() {
     const thumb = item.results?.[0]?.thumbUrl || item.results?.[0]?.url || item.image?.displayUrl || item.image?.url || '';
     row.innerHTML = `
       <div class="history-main">
-        ${thumb ? `<img class="history-thumb" src="${escapeAttr(thumb)}" alt="">` : '<div class="history-thumb"></div>'}
+        ${thumb ? `<img class="history-thumb" src="${escapeAttr(thumb)}" alt="" onerror="this.parentElement.innerHTML='<div class=history-thumb-missing>图片缓存丢失</div>'">` : '<div class="history-thumb history-thumb-missing">图片缓存丢失</div>'}
         <div>
           <div class="history-title">${escapeHtml(item.title || '未命名记录')}</div>
           <div class="history-meta">${formatDateTime(item.createdAt)} · ${escapeHtml(item.image?.pageTitle || '未知页面')} · ${item.results?.length || 0} 张结果</div>
@@ -857,6 +930,9 @@ function renderHistoryList() {
     row.querySelector('[data-action="restore"]').addEventListener('click', () => restoreHistoryItem(item));
     row.querySelector('[data-action="delete"]').addEventListener('click', () => handleDeleteHistoryItem(item.id));
     row.querySelector('[data-action="copy-en"]').addEventListener('click', () => copyText(item.prompts?.en || '', '已复制英文提示词'));
+    // Async: try loading from IndexedDB blob for better durability
+    loadHistoryThumbFromBlob(item, row);
+
     row.querySelector('[data-action="download"]').addEventListener('click', async () => {
       const downloadable = (item.results || []).filter((image) => !image.failed && (image.url || image.thumbUrl));
       if (!downloadable.length) return toast('该记录没有可下载的生成结果');
@@ -878,6 +954,42 @@ function getFilteredHistory() {
       if (!query) return true;
       return [item.prompts?.zh, item.prompts?.en, item.image?.pageTitle, ...(item.prompts?.tags || [])].join(' ').toLowerCase().includes(query);
     });
+}
+
+async function loadHistoryThumbFromBlob(item, row) {
+  if (!item || !row) return;
+  // Priority: thumbnail blob > source blob > first result blob
+  const blobIds = [
+    item.thumbnailBlobId,
+    item.sourceImageBlobId,
+    item.image?.blobId,
+    item.results?.[0]?.blobId
+  ].filter(Boolean);
+
+  console.log('[PromptPilot][HISTORY_THUMB_DEBUG]', { id: item.id, candidateBlobIds: blobIds });
+
+  for (const blobId of blobIds) {
+    try {
+      const url = await createObjectUrlFromBlobId(blobId);
+      if (url) {
+        const img = row.querySelector('.history-thumb');
+        if (img) { img.src = url; img.dataset.blobSource = blobId; }
+        console.log('[PromptPilot][HISTORY_THUMB_LOADED]', { id: item.id, blobId });
+        return;
+      }
+    } catch (e) { console.warn('[PromptPilot][HISTORY_BLOB_MISSING]', { id: item.id, blobId, error: e?.message }); }
+  }
+
+  // Fallback: remote URLs
+  const fallbackUrl = item.image?.displayUrl || item.image?.url || item.results?.[0]?.url || item.results?.[0]?.thumbUrl;
+  if (fallbackUrl && !String(fallbackUrl).startsWith('data:')) {
+    const img = row.querySelector('.history-thumb');
+    if (img) { img.src = fallbackUrl; img.dataset.blobSource = 'remote-fallback'; }
+    console.log('[PromptPilot][HISTORY_IMAGE_FALLBACK_USED]', { id: item.id, fallbackUrl: fallbackUrl.slice(0, 80) });
+    return;
+  }
+
+  console.warn('[PromptPilot][HISTORY_THUMB_ALL_FAILED]', { id: item.id });
 }
 
 function restoreHistoryItem(item) {
