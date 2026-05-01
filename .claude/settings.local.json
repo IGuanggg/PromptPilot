@@ -13,7 +13,10 @@
       "Bash(git commit -m ' *)",
       "mcp__Claude_in_Chrome__tabs_context_mcp",
       "mcp__Claude_in_Chrome__switch_browser",
-      "WebSearch"
+      "WebSearch",
+      "Bash(node --check extension/src/storage/imageBlobStore.js)",
+      "Bash(node --check extension/src/utils/imageThumbnail.js)",
+      "Bash(node --check extension/src/sidepanel/sidepanel.js)"
     ]
   }
 }
